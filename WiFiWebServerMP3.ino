@@ -23,7 +23,7 @@
 #define MP3RX 15
 #define VOL A0
 
-const char* ssid     = "your-ssid";
+const char* ssid = "your-ssid";
 const char* password = "your-password";
 
 // softwere serial for mp3 player
@@ -38,10 +38,32 @@ void setVolume(int volume) {
   Serial.println((String)"Volume set to " + volume);
   mp3_set_volume(volume);
 }
-  
+
 //non-block volume control class
 VolumeControl vc(VOL, 500, &setVolume);
 
+bool mp3state() {
+  bool result;
+  int i = 0;
+  while (mp3serial.available()) {
+    delay(3);  //пауза для того, чтобы буфер наполнился
+    if (mp3serial.available() > 0) {
+      char c = mp3serial.read();  //получить один байт из порта
+      if (i == 6) {
+        result = (bool) c;
+      }
+      i++;
+      if (i > 9) { // Ответ 10 байт
+        delay(30);
+        break;
+      }
+      Serial.print(c, HEX);
+      Serial.print(' ');
+    }
+  }
+  Serial.println();
+  return result;
+}
 
 void setup() {
   Serial.begin(115200);
@@ -79,6 +101,11 @@ void loop() {
   unsigned long startMills = millis();
   // Set volume
   vc.update(startMills);
+
+  if(mp3serial.available()){
+    Serial.println("State from mp3");
+    mp3state();
+  }
 
   // Check if a client has connected
   WiFiClient client = server.available();
@@ -120,6 +147,34 @@ void loop() {
     delay(100);
     s += "stop";
   }
+  else if (req.indexOf("/volume/up") != -1) {
+    Serial.println("mp3_set_volume +");
+    vc.softwareSet(vc.current() + 1);
+    delay(100);
+    s += "volume up";
+  }
+  else if (req.indexOf("/volume/down") != -1) {
+    Serial.println("mp3_set_volume -");
+    vc.softwareSet(vc.current() - 1);
+    delay(100);
+    s += "volume down";
+  }
+  else if (req.indexOf("/mp3/status") != -1) {
+    Serial.println("mp3_get_state");
+    mp3_get_state();
+    delay(100);
+    while (!mp3serial.available()) {
+      delay(1);
+      if (millis() - startMills > 5000) {
+        Serial.println("Get state Timeout!");
+        client.stop();
+        return;
+      }
+    }
+
+    Serial.println(mp3state(), HEX);
+    s += "get state";
+  }
   else if (req.indexOf("/favicon.ico") != -1) {
 
     delay(1000);
@@ -145,7 +200,7 @@ void loop() {
     Serial.print(s);
     Serial.print(" ms  @");
     Serial.print(WiFi.RSSI());
-    Serial.print(" dBm");
+    Serial.println(" dBm");
     f.close();
 
     Serial.println("Favicon has been sended");

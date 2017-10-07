@@ -26,12 +26,20 @@
 const char* ssid = "your-ssid";
 const char* password = "your-password";
 
+//const char* host = "api.github.com";
+//const int httpsPort = 443;
+const char* host = "api.github.com";
+const int httpsPort = 443;
+
 // softwere serial for mp3 player
 SoftwareSerial mp3serial(MP3TX, MP3RX); // RX, TX
 
 // Create an instance of the server
 // specify the port to listen on as an argument
 WiFiServer server(80);
+
+// Create Secure espClient
+WiFiClientSecure espClient;
 
 // VolumeControl callback
 void setVolume(int volume) {
@@ -95,6 +103,99 @@ void setup() {
 
   // Print the IP address
   Serial.println(WiFi.localIP());
+
+
+
+/*
+  //Load cert, key, ca
+  if (!SPIFFS.begin()) {
+    Serial.println("Failed to mount file system");
+    return;
+  }
+  // Load certificate file
+  // $ openssl x509 -in aaaaaaaaa-certificate.pem.crt.txt -out cert.der -outform DER 
+  File cert = SPIFFS.open("/cert.der", "r"); //replace cert.crt eith your uploaded file name
+  if (!cert) {
+    Serial.println("Failed to open cert file");
+  }
+  else
+    Serial.println("Success to open cert file");
+  delay(1000);
+  if (espClient.loadCertificate(cert))
+    Serial.println("cert loaded");
+  else
+    Serial.println("cert not loaded");
+
+  // Load private key file
+  // $ openssl rsa -in aaaaaaaaaa-private.pem.key -out private.der -outform DER
+  File privateKey = SPIFFS.open("/private.der", "r"); //replace private eith your uploaded file name
+  if (!privateKey) {
+    Serial.println("Failed to open private cert file");
+  }
+  else
+    Serial.println("Success to open private cert file");
+  delay(1000);
+  if (espClient.loadPrivateKey(privateKey))
+    Serial.println("private key loaded");
+  else
+    Serial.println("private key not loaded");
+
+  // Load CA file
+  File ca = SPIFFS.open("/ca.der", "r"); //replace ca eith your uploaded file name
+  if (!ca) {
+      Serial.println("Failed to open ca ");
+  }
+  else
+    Serial.println("Success to open ca");
+  delay(1000);
+  if(espClient.loadCACert(ca))
+    Serial.println("ca loaded");
+  else
+    Serial.println("ca failed");
+*/
+  //connect to host
+  Serial.print("connecting to ");
+  Serial.println(host);
+  if (!espClient.connect(host, httpsPort)) {
+    Serial.println("connection failed");
+    return;
+  }
+
+  String url = "/repos/esp8266/Arduino/commits/master/status";
+  Serial.print("requesting URL: ");
+  Serial.println(url);
+
+  espClient.print(String("GET ") + url + " HTTP/1.1\r\n" +
+               "Host: " + host + "\r\n" +
+               "User-Agent: BuildFailureDetectorESP8266\r\n" +
+               "Connection: close\r\n\r\n");
+
+  Serial.println("request sent");
+  while (espClient.connected()) {
+    String line = espClient.readStringUntil('\n');
+    if (line == "\r") {
+      Serial.println("headers received");
+      break;
+    }
+  }
+  String line = espClient.readStringUntil('\n');
+  if (line.startsWith("{\"state\":\"success\"")) {
+    Serial.println("esp8266/Arduino CI successfull!");
+  } else {
+    Serial.println("esp8266/Arduino CI has failed");
+  }
+  Serial.println("reply was:");
+  Serial.println("==========");
+  Serial.println(line);
+  Serial.println("==========");
+  Serial.println("closing connection");
+
+
+
+
+
+
+
 }
 
 void loop() {

@@ -10,10 +10,12 @@
   #include "filename.h" will look in the sketch folder first and next in the library directories
   #include <filename.h> will only look in the library directories
 */
+
 #include "VolumeControl.h"
 
 #include "FS.h"
 #include <ESP8266WiFi.h>
+#include <time.h> // for sntp
 #include <SoftwareSerial.h>
 #include <DFPlayer_Mini_Mp3.h> //http://iarduino.ru/file/140.html
 
@@ -26,10 +28,22 @@
 const char* ssid = "your-ssid";
 const char* password = "your-password";
 
+// From resolve "api.dev" to IP
+// need to add a header "host" 
+// connect by hostIp
+
+
+
 //const char* host = "api.github.com";
 //const int httpsPort = 443;
-const char* host = "api.github.com";
-const int httpsPort = 443;
+//  String url = "/repos/esp8266/Arduino/commits/master/status";
+const char* host = "192.168.1.39";
+const char* hostHeader = "api.dev";
+const int httpsPort = 8082;
+String url = "/v1/feedback/create";
+// Use web browser to view and copy SHA1 fingerprint of the certificate or use
+// openssl x509 -in server.crt -fingerprint 
+const char* fingerprint = "A1 1F 18 32 A7 2C CE 2B 74 F8 0E 35 A7 11 16 11 7F 61 22 C9";
 
 // softwere serial for mp3 player
 SoftwareSerial mp3serial(MP3TX, MP3RX); // RX, TX
@@ -76,6 +90,7 @@ bool mp3state() {
 void setup() {
   Serial.begin(115200);
   delay(10);
+  Serial.setDebugOutput(true);
 
   // Init mp3
   mp3serial.begin(9600);
@@ -106,15 +121,27 @@ void setup() {
 
 
 
-/*
+
+
+
+
+  // Synchronize time useing SNTP. This is necessary to verify that
+  // the TLS certificates offered by the server are currently valid.
+  Serial.println("Setting time using SNTP");
+  configTime(3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+
+
+
+
+
   //Load cert, key, ca
   if (!SPIFFS.begin()) {
     Serial.println("Failed to mount file system");
     return;
   }
   // Load certificate file
-  // $ openssl x509 -in aaaaaaaaa-certificate.pem.crt.txt -out cert.der -outform DER 
-  File cert = SPIFFS.open("/cert.der", "r"); //replace cert.crt eith your uploaded file name
+  // $ openssl x509 -in client01.crt -out client01.crt.der -outform DER 
+  File cert = SPIFFS.open("/client01.crt.der", "r"); //replace client01.crt.der eith your uploaded file name
   if (!cert) {
     Serial.println("Failed to open cert file");
   }
@@ -127,8 +154,8 @@ void setup() {
     Serial.println("cert not loaded");
 
   // Load private key file
-  // $ openssl rsa -in aaaaaaaaaa-private.pem.key -out private.der -outform DER
-  File privateKey = SPIFFS.open("/private.der", "r"); //replace private eith your uploaded file name
+  // $ openssl rsa -in client01.key -out client01.key.der -outform DER
+  File privateKey = SPIFFS.open("/client01.key.der", "r"); //replace client01.key.der eith your uploaded file name
   if (!privateKey) {
     Serial.println("Failed to open private cert file");
   }
@@ -139,35 +166,43 @@ void setup() {
     Serial.println("private key loaded");
   else
     Serial.println("private key not loaded");
-
+/*
   // Load CA file
-  File ca = SPIFFS.open("/ca.der", "r"); //replace ca eith your uploaded file name
+  File ca = SPIFFS.open("/ca.crt.der", "r"); //replace ca.crt.der eith your uploaded file name
   if (!ca) {
       Serial.println("Failed to open ca ");
   }
   else
     Serial.println("Success to open ca");
   delay(1000);
+  
   if(espClient.loadCACert(ca))
     Serial.println("ca loaded");
   else
     Serial.println("ca failed");
 */
+
   //connect to host
   Serial.print("connecting to ");
-  Serial.println(host);
+  Serial.println((String)host);
   if (!espClient.connect(host, httpsPort)) {
     Serial.println("connection failed");
     return;
   }
 
-  String url = "/repos/esp8266/Arduino/commits/master/status";
+
+  if (espClient.verify(fingerprint, hostHeader)) {
+    Serial.println("certificate matches");
+  } else {
+    Serial.println("certificate doesn't match");
+  }
+  
   Serial.print("requesting URL: ");
   Serial.println(url);
 
-  espClient.print(String("GET ") + url + " HTTP/1.1\r\n" +
-               "Host: " + host + "\r\n" +
-               "User-Agent: BuildFailureDetectorESP8266\r\n" +
+  espClient.print(String("POST ") + url + " HTTP/1.1\r\n" +
+               "Host: " + hostHeader + "\r\n" +
+               "User-Agent: MP3ESP8266\r\n" +
                "Connection: close\r\n\r\n");
 
   Serial.println("request sent");
@@ -178,17 +213,29 @@ void setup() {
       break;
     }
   }
-  String line = espClient.readStringUntil('\n');
-  if (line.startsWith("{\"state\":\"success\"")) {
-    Serial.println("esp8266/Arduino CI successfull!");
-  } else {
-    Serial.println("esp8266/Arduino CI has failed");
-  }
+  String line;
   Serial.println("reply was:");
   Serial.println("==========");
-  Serial.println(line);
+  while (line = espClient.readStringUntil('\n')){
+    if (!espClient.connected()){
+      break;
+    }
+    Serial.println(line);
+  }
   Serial.println("==========");
   Serial.println("closing connection");
+  
+//  String line = espClient.readStringUntil('\n');
+//  if (line.startsWith("{\"state\":\"success\"")) {
+//    Serial.println("esp8266/Arduino CI successfull!");
+//  } else {
+//    Serial.println("esp8266/Arduino CI has failed");
+//  }
+//  Serial.println("reply was:");
+//  Serial.println("==========");
+//  Serial.println(line);
+//  Serial.println("==========");
+//  Serial.println("closing connection");
 
 
 

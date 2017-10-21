@@ -11,7 +11,7 @@
   #include <filename.h> will only look in the library directories
 */
 
-#include "VolumeControl.h"
+#include "VolumeControl.h" // https://github.com/bscheshir/volume-control
 
 #include "FS.h"
 #include <ESP8266WiFi.h>
@@ -166,7 +166,7 @@ void setup() {
     Serial.println("private key loaded");
   else
     Serial.println("private key not loaded");
-/*
+
   // Load CA file
   File ca = SPIFFS.open("/ca.crt.der", "r"); //replace ca.crt.der eith your uploaded file name
   if (!ca) {
@@ -178,9 +178,10 @@ void setup() {
   
   if(espClient.loadCACert(ca))
     Serial.println("ca loaded");
+    espClient.allowSelfSignedCerts();
   else
     Serial.println("ca failed");
-*/
+
 
   //connect to host
   Serial.print("connecting to ");

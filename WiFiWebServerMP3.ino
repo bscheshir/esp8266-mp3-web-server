@@ -18,6 +18,7 @@
 #include <time.h> // for sntp
 #include <SoftwareSerial.h>
 #include <DFPlayer_Mini_Mp3.h> //http://iarduino.ru/file/140.html
+#include <ArduinoJson.h> //https://github.com/bblanchon/ArduinoJson
 
 //   RX is digital pin 7 (D7 - GIPO13)(connect to TX of other device)
 //   TX is digital pin 8 (D8 - GIPO15)(connect to RX of other device)
@@ -25,11 +26,13 @@
 #define MP3RX 15
 #define VOL A0
 
-const char* ssid = "your-ssid";
-const char* password = "your-password";
+//const char* ssid = "your-ssid";
+//const char* password = "your-password";
+const char* ssid = "HOMENET";
+const char* password = "HomenetWiFi";
 
 // From resolve "api.dev" to IP
-// need to add a header "host" 
+// need to add a header "host"
 // connect by hostIp
 
 
@@ -42,8 +45,18 @@ const char* hostHeader = "api.dev";
 const int httpsPort = 8082;
 String url = "/v1/feedback/create";
 // Use web browser to view and copy SHA1 fingerprint of the certificate or use
-// openssl x509 -in server.crt -fingerprint 
+// openssl x509 -in server.crt -fingerprint
 const char* fingerprint = "A1 1F 18 32 A7 2C CE 2B 74 F8 0E 35 A7 11 16 11 7F 61 22 C9";
+
+// for read json 
+const size_t MAX_CONTENT_SIZE = 512;       // max size of the HTTP response
+// The type of data that we want to extract from the page
+struct UserData {
+  char noticeId[32];
+  char songId[32];
+};
+
+
 
 // softwere serial for mp3 player
 SoftwareSerial mp3serial(MP3TX, MP3RX); // RX, TX
@@ -86,6 +99,43 @@ bool mp3state() {
   Serial.println();
   return result;
 }
+
+// https://github.com/bblanchon/ArduinoJson/blob/master/examples/JsonHttpClient/JsonHttpClient.ino
+// Parse the JSON from the input string and extract the interesting values
+// Here is the JSON we need to parse
+// {
+//   "noticeId": 1,
+//   "songId": 1,
+// }
+bool readReponseContent(struct UserData* userData) {
+  // Compute optimal size of the JSON buffer according to what we need to parse.
+  // See https://bblanchon.github.io/ArduinoJson/assistant/
+  const size_t BUFFER_SIZE =
+      JSON_OBJECT_SIZE(2)    // the root object has 8 elements
+      + MAX_CONTENT_SIZE;    // additional space for strings
+
+  // Allocate a temporary memory pool
+  DynamicJsonBuffer jsonBuffer(BUFFER_SIZE);
+
+  JsonObject& root = jsonBuffer.parseObject(client);
+
+  if (!root.success()) {
+    Serial.println("JSON parsing failed!");
+    return false;
+  }
+
+  // Here were copy the strings we're interested in
+  strcpy(userData->noticeId, root["noticeId"]);
+  strcpy(userData->songId, root["songId"]);
+  // It's not mandatory to make a copy, you could just use the pointers
+  // Since, they are pointing inside the "content" buffer, so you need to make
+  // sure it's still in memory when you read the string
+
+  return true;
+}
+
+
+
 
 void setup() {
   Serial.begin(115200);
@@ -140,7 +190,7 @@ void setup() {
     return;
   }
   // Load certificate file
-  // $ openssl x509 -in client01.crt -out client01.crt.der -outform DER 
+  // $ openssl x509 -in client01.crt -out client01.crt.der -outform DER
   File cert = SPIFFS.open("/client01.crt.der", "r"); //replace client01.crt.der eith your uploaded file name
   if (!cert) {
     Serial.println("Failed to open cert file");
@@ -166,21 +216,22 @@ void setup() {
     Serial.println("private key loaded");
   else
     Serial.println("private key not loaded");
-/*
-  // Load CA file
-  File ca = SPIFFS.open("/ca.crt.der", "r"); //replace ca.crt.der eith your uploaded file name
-  if (!ca) {
-      Serial.println("Failed to open ca ");
-  }
-  else
-    Serial.println("Success to open ca");
-  delay(1000);
-  
-  if(espClient.loadCACert(ca))
-    Serial.println("ca loaded");
-  else
-    Serial.println("ca failed");
-*/
+  /*
+    // Load CA file
+    File ca = SPIFFS.open("/ca.crt.der", "r"); //replace ca.crt.der eith your uploaded file name
+    if (!ca) {
+        Serial.println("Failed to open ca ");
+    }
+    else
+      Serial.println("Success to open ca");
+    delay(1000);
+
+    if(espClient.loadCACert(ca))
+      Serial.println("ca loaded");
+    else
+      Serial.println("ca failed");
+  */
+
 
   //connect to host
   Serial.print("connecting to ");
@@ -196,14 +247,27 @@ void setup() {
   } else {
     Serial.println("certificate doesn't match");
   }
-  
+
   Serial.print("requesting URL: ");
   Serial.println(url);
 
+  String body = "name=" + urlencode("tester") +
+                "&email=" + urlencode("example@gmail.com") +
+                "&subject=" + urlencode("test theme") +
+                "&body=" + urlencode("test body кирилица");
+
+  char contentLength[30];
+  sprintf(contentLength, "Content-Length: %d\r\n", strlen(body.c_str()));
+
   espClient.print(String("POST ") + url + " HTTP/1.1\r\n" +
-               "Host: " + hostHeader + "\r\n" +
-               "User-Agent: MP3ESP8266\r\n" +
-               "Connection: close\r\n\r\n");
+                  "Host: " + hostHeader + "\r\n" +
+                  "User-Agent: MP3ESP8266\r\n" +
+                  String(contentLength) +
+                  "Content-Type: " + "application/x-www-form-urlencoded" + "\r\n" +
+                  "Connection: close\r\n\r\n" +
+                  body +
+                  "\r\n"
+                 );
 
   Serial.println("request sent");
   while (espClient.connected()) {
@@ -216,32 +280,16 @@ void setup() {
   String line;
   Serial.println("reply was:");
   Serial.println("==========");
-  while (line = espClient.readStringUntil('\n')){
-    if (!espClient.connected()){
+  while (line = espClient.readStringUntil('\n')) {
+    if (!espClient.connected()) {
       break;
     }
     Serial.println(line);
   }
   Serial.println("==========");
   Serial.println("closing connection");
-  
-//  String line = espClient.readStringUntil('\n');
-//  if (line.startsWith("{\"state\":\"success\"")) {
-//    Serial.println("esp8266/Arduino CI successfull!");
-//  } else {
-//    Serial.println("esp8266/Arduino CI has failed");
-//  }
-//  Serial.println("reply was:");
-//  Serial.println("==========");
-//  Serial.println(line);
-//  Serial.println("==========");
-//  Serial.println("closing connection");
 
-
-
-
-
-
+ 
 
 }
 
@@ -250,7 +298,7 @@ void loop() {
   // Set volume
   vc.update(startMills);
 
-  if(mp3serial.available()){
+  if (mp3serial.available()) {
     Serial.println("State from mp3");
     mp3state();
   }

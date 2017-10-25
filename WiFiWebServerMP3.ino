@@ -11,7 +11,7 @@
   #include <filename.h> will only look in the library directories
 */
 
-#include "VolumeControl.h"
+#include "VolumeControl.h" // https://github.com/bscheshir/volume-control
 
 #include "FS.h"
 #include <ESP8266WiFi.h>
@@ -26,10 +26,8 @@
 #define MP3RX 15
 #define VOL A0
 
-//const char* ssid = "your-ssid";
-//const char* password = "your-password";
-const char* ssid = "HOMENET";
-const char* password = "HomenetWiFi";
+const char* ssid = "your-ssid";
+const char* password = "your-password";
 
 // From resolve "api.dev" to IP
 // need to add a header "host"

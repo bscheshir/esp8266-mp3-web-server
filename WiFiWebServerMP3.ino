@@ -46,8 +46,9 @@ String url = "/v1/feedback/create";
 // openssl x509 -in server.crt -fingerprint
 const char* fingerprint = "A1 1F 18 32 A7 2C CE 2B 74 F8 0E 35 A7 11 16 11 7F 61 22 C9";
 
-// for read json 
+// for read json
 const size_t MAX_CONTENT_SIZE = 512;       // max size of the HTTP response
+const unsigned long HTTP_TIMEOUT = 10000;  // max respone time from server
 // The type of data that we want to extract from the page
 struct UserData {
   char noticeId[32];
@@ -109,13 +110,13 @@ bool readReponseContent(struct UserData* userData) {
   // Compute optimal size of the JSON buffer according to what we need to parse.
   // See https://bblanchon.github.io/ArduinoJson/assistant/
   const size_t BUFFER_SIZE =
-      JSON_OBJECT_SIZE(2)    // the root object has 8 elements
-      + MAX_CONTENT_SIZE;    // additional space for strings
+    JSON_OBJECT_SIZE(2)    // the root object has 8 elements
+    + MAX_CONTENT_SIZE;    // additional space for strings
 
   // Allocate a temporary memory pool
   DynamicJsonBuffer jsonBuffer(BUFFER_SIZE);
 
-  JsonObject& root = jsonBuffer.parseObject(client);
+  JsonObject& root = jsonBuffer.parseObject(espClient);
 
   if (!root.success()) {
     Serial.println("JSON parsing failed!");
@@ -231,6 +232,30 @@ void setup() {
   */
 
 
+
+}
+
+
+
+// Skip HTTP headers so that we are at the beginning of the response's body
+bool skipResponseHeaders() {
+  // HTTP headers end with an empty line
+  char endOfHeaders[] = "\r\n\r\n";
+
+  espClient.setTimeout(HTTP_TIMEOUT);
+  bool ok = espClient.find(endOfHeaders);
+
+  if (!ok) {
+    Serial.println("No response or invalid response!");
+  }
+
+  return ok;
+}
+
+void remoteGetNumOfMp3() {
+
+  //get number of truck
+  
   //connect to host
   Serial.print("connecting to ");
   Serial.println((String)host);
@@ -245,6 +270,59 @@ void setup() {
   } else {
     Serial.println("certificate doesn't match");
   }
+
+  String url = "/v1/notification";
+
+  Serial.print("requesting URL: ");
+  Serial.println(url);
+
+  espClient.print(String("GET ") + url + " HTTP/1.1\r\n" +
+                  "Host: " + hostHeader + "\r\n" +
+                  "User-Agent: MP3ESP8266\r\n" +
+                  "Connection: close\r\n\r\n" +
+                 );
+
+  Serial.println("request sent");
+
+  if (skipResponseHeaders()) {
+    Serial.println("headers received");
+    UserData userData;
+    if (readReponseContent(&userData)) {
+      
+      Serial.print("noticeId = ");
+      Serial.println(userData->noticeId);
+      Serial.print("Company = ");
+      Serial.println(userData->songId);
+    }
+  } 
+
+  Serial.println("closing connection");
+
+
+
+
+  //wait until plaing
+
+
+
+
+  //connect to host
+  Serial.print("connecting to ");
+  Serial.println((String)host);
+  if (!espClient.connect(host, httpsPort)) {
+    Serial.println("connection failed");
+    return;
+  }
+
+
+  if (espClient.verify(fingerprint, hostHeader)) {
+    Serial.println("certificate matches");
+  } else {
+    Serial.println("certificate doesn't match");
+  }
+
+
+  String url = "/v1/feedback/create";
 
   Serial.print("requesting URL: ");
   Serial.println(url);
@@ -287,9 +365,9 @@ void setup() {
   Serial.println("==========");
   Serial.println("closing connection");
 
- 
 
 }
+
 
 void loop() {
   unsigned long startMills = millis();
@@ -300,6 +378,8 @@ void loop() {
     Serial.println("State from mp3");
     mp3state();
   }
+
+  //check
 
   // Check if a client has connected
   WiFiClient client = server.available();

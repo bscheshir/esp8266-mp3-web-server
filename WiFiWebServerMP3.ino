@@ -10,12 +10,15 @@
   #include "filename.h" will look in the sketch folder first and next in the library directories
   #include <filename.h> will only look in the library directories
 */
-#include "VolumeControl.h"
+
+#include "VolumeControl.h" // https://github.com/bscheshir/volume-control
 
 #include "FS.h"
 #include <ESP8266WiFi.h>
+#include <time.h> // for sntp
 #include <SoftwareSerial.h>
 #include <DFPlayer_Mini_Mp3.h> //http://iarduino.ru/file/140.html
+#include <ArduinoJson.h> //https://github.com/bblanchon/ArduinoJson
 
 //   RX is digital pin 7 (D7 - GIPO13)(connect to TX of other device)
 //   TX is digital pin 8 (D8 - GIPO15)(connect to RX of other device)
@@ -26,10 +29,33 @@
 const char* ssid = "your-ssid";
 const char* password = "your-password";
 
+// From resolve "api.dev" to IP
+// need to add a header "host"
+// connect by hostIp
+
+
+
 //const char* host = "api.github.com";
 //const int httpsPort = 443;
-const char* host = "api.github.com";
-const int httpsPort = 443;
+//  String url = "/repos/esp8266/Arduino/commits/master/status";
+const char* host = "192.168.1.39";
+const char* hostHeader = "api.dev";
+const int httpsPort = 8082;
+String url = "/v1/feedback/create";
+// Use web browser to view and copy SHA1 fingerprint of the certificate or use
+// openssl x509 -in server.crt -fingerprint
+const char* fingerprint = "A1 1F 18 32 A7 2C CE 2B 74 F8 0E 35 A7 11 16 11 7F 61 22 C9";
+
+// for read json
+const size_t MAX_CONTENT_SIZE = 512;       // max size of the HTTP response
+const unsigned long HTTP_TIMEOUT = 10000;  // max respone time from server
+// The type of data that we want to extract from the page
+struct UserData {
+  char noticeId[32];
+  char songId[32];
+};
+
+
 
 // softwere serial for mp3 player
 SoftwareSerial mp3serial(MP3TX, MP3RX); // RX, TX
@@ -73,9 +99,47 @@ bool mp3state() {
   return result;
 }
 
+// https://github.com/bblanchon/ArduinoJson/blob/master/examples/JsonHttpClient/JsonHttpClient.ino
+// Parse the JSON from the input string and extract the interesting values
+// Here is the JSON we need to parse
+// {
+//   "noticeId": 1,
+//   "songId": 1,
+// }
+bool readReponseContent(struct UserData* userData) {
+  // Compute optimal size of the JSON buffer according to what we need to parse.
+  // See https://bblanchon.github.io/ArduinoJson/assistant/
+  const size_t BUFFER_SIZE =
+    JSON_OBJECT_SIZE(2)    // the root object has 8 elements
+    + MAX_CONTENT_SIZE;    // additional space for strings
+
+  // Allocate a temporary memory pool
+  DynamicJsonBuffer jsonBuffer(BUFFER_SIZE);
+
+  JsonObject& root = jsonBuffer.parseObject(espClient);
+
+  if (!root.success()) {
+    Serial.println("JSON parsing failed!");
+    return false;
+  }
+
+  // Here were copy the strings we're interested in
+  strcpy(userData->noticeId, root["noticeId"]);
+  strcpy(userData->songId, root["songId"]);
+  // It's not mandatory to make a copy, you could just use the pointers
+  // Since, they are pointing inside the "content" buffer, so you need to make
+  // sure it's still in memory when you read the string
+
+  return true;
+}
+
+
+
+
 void setup() {
   Serial.begin(115200);
   delay(10);
+  Serial.setDebugOutput(true);
 
   // Init mp3
   mp3serial.begin(9600);
@@ -106,15 +170,27 @@ void setup() {
 
 
 
-/*
+
+
+
+
+  // Synchronize time useing SNTP. This is necessary to verify that
+  // the TLS certificates offered by the server are currently valid.
+  Serial.println("Setting time using SNTP");
+  configTime(3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+
+
+
+
+
   //Load cert, key, ca
   if (!SPIFFS.begin()) {
     Serial.println("Failed to mount file system");
     return;
   }
   // Load certificate file
-  // $ openssl x509 -in aaaaaaaaa-certificate.pem.crt.txt -out cert.der -outform DER 
-  File cert = SPIFFS.open("/cert.der", "r"); //replace cert.crt eith your uploaded file name
+  // $ openssl x509 -in client01.crt -out client01.crt.der -outform DER
+  File cert = SPIFFS.open("/client01.crt.der", "r"); //replace client01.crt.der eith your uploaded file name
   if (!cert) {
     Serial.println("Failed to open cert file");
   }
@@ -127,8 +203,8 @@ void setup() {
     Serial.println("cert not loaded");
 
   // Load private key file
-  // $ openssl rsa -in aaaaaaaaaa-private.pem.key -out private.der -outform DER
-  File privateKey = SPIFFS.open("/private.der", "r"); //replace private eith your uploaded file name
+  // $ openssl rsa -in client01.key -out client01.key.der -outform DER
+  File privateKey = SPIFFS.open("/client01.key.der", "r"); //replace client01.key.der eith your uploaded file name
   if (!privateKey) {
     Serial.println("Failed to open private cert file");
   }
@@ -139,36 +215,135 @@ void setup() {
     Serial.println("private key loaded");
   else
     Serial.println("private key not loaded");
+  /*
+    // Load CA file
+    File ca = SPIFFS.open("/ca.crt.der", "r"); //replace ca.crt.der eith your uploaded file name
+    if (!ca) {
+        Serial.println("Failed to open ca ");
+    }
+    else
+      Serial.println("Success to open ca");
+    delay(1000);
 
-  // Load CA file
-  File ca = SPIFFS.open("/ca.der", "r"); //replace ca eith your uploaded file name
-  if (!ca) {
-      Serial.println("Failed to open ca ");
+    if(espClient.loadCACert(ca))
+      Serial.println("ca loaded");
+    else
+      Serial.println("ca failed");
+  */
+
+
+
+}
+
+
+
+// Skip HTTP headers so that we are at the beginning of the response's body
+bool skipResponseHeaders() {
+  // HTTP headers end with an empty line
+  char endOfHeaders[] = "\r\n\r\n";
+
+  espClient.setTimeout(HTTP_TIMEOUT);
+  bool ok = espClient.find(endOfHeaders);
+
+  if (!ok) {
+    Serial.println("No response or invalid response!");
   }
-  else
-    Serial.println("Success to open ca");
-  delay(1000);
-  if(espClient.loadCACert(ca))
-    Serial.println("ca loaded");
-  else
-    Serial.println("ca failed");
-*/
+
+  return ok;
+}
+
+void remoteGetNumOfMp3() {
+
+  //get number of truck
+  
   //connect to host
   Serial.print("connecting to ");
-  Serial.println(host);
+  Serial.println((String)host);
   if (!espClient.connect(host, httpsPort)) {
     Serial.println("connection failed");
     return;
   }
 
-  String url = "/repos/esp8266/Arduino/commits/master/status";
+
+  if (espClient.verify(fingerprint, hostHeader)) {
+    Serial.println("certificate matches");
+  } else {
+    Serial.println("certificate doesn't match");
+  }
+
+  String url = "/v1/notification";
+
   Serial.print("requesting URL: ");
   Serial.println(url);
 
   espClient.print(String("GET ") + url + " HTTP/1.1\r\n" +
-               "Host: " + host + "\r\n" +
-               "User-Agent: BuildFailureDetectorESP8266\r\n" +
-               "Connection: close\r\n\r\n");
+                  "Host: " + hostHeader + "\r\n" +
+                  "User-Agent: MP3ESP8266\r\n" +
+                  "Connection: close\r\n\r\n" +
+                 );
+
+  Serial.println("request sent");
+
+  if (skipResponseHeaders()) {
+    Serial.println("headers received");
+    UserData userData;
+    if (readReponseContent(&userData)) {
+      
+      Serial.print("noticeId = ");
+      Serial.println(userData->noticeId);
+      Serial.print("Company = ");
+      Serial.println(userData->songId);
+    }
+  } 
+
+  Serial.println("closing connection");
+
+
+
+
+  //wait until plaing
+
+
+
+
+  //connect to host
+  Serial.print("connecting to ");
+  Serial.println((String)host);
+  if (!espClient.connect(host, httpsPort)) {
+    Serial.println("connection failed");
+    return;
+  }
+
+
+  if (espClient.verify(fingerprint, hostHeader)) {
+    Serial.println("certificate matches");
+  } else {
+    Serial.println("certificate doesn't match");
+  }
+
+
+  String url = "/v1/feedback/create";
+
+  Serial.print("requesting URL: ");
+  Serial.println(url);
+
+  String body = "name=" + urlencode("tester") +
+                "&email=" + urlencode("example@gmail.com") +
+                "&subject=" + urlencode("test theme") +
+                "&body=" + urlencode("test body кирилица");
+
+  char contentLength[30];
+  sprintf(contentLength, "Content-Length: %d\r\n", strlen(body.c_str()));
+
+  espClient.print(String("POST ") + url + " HTTP/1.1\r\n" +
+                  "Host: " + hostHeader + "\r\n" +
+                  "User-Agent: MP3ESP8266\r\n" +
+                  String(contentLength) +
+                  "Content-Type: " + "application/x-www-form-urlencoded" + "\r\n" +
+                  "Connection: close\r\n\r\n" +
+                  body +
+                  "\r\n"
+                 );
 
   Serial.println("request sent");
   while (espClient.connected()) {
@@ -178,35 +353,33 @@ void setup() {
       break;
     }
   }
-  String line = espClient.readStringUntil('\n');
-  if (line.startsWith("{\"state\":\"success\"")) {
-    Serial.println("esp8266/Arduino CI successfull!");
-  } else {
-    Serial.println("esp8266/Arduino CI has failed");
-  }
+  String line;
   Serial.println("reply was:");
   Serial.println("==========");
-  Serial.println(line);
+  while (line = espClient.readStringUntil('\n')) {
+    if (!espClient.connected()) {
+      break;
+    }
+    Serial.println(line);
+  }
   Serial.println("==========");
   Serial.println("closing connection");
 
 
-
-
-
-
-
 }
+
 
 void loop() {
   unsigned long startMills = millis();
   // Set volume
   vc.update(startMills);
 
-  if(mp3serial.available()){
+  if (mp3serial.available()) {
     Serial.println("State from mp3");
     mp3state();
   }
+
+  //check
 
   // Check if a client has connected
   WiFiClient client = server.available();

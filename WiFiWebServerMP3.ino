@@ -41,7 +41,7 @@ const char* password = "your-password";
 const char* host = "192.168.1.39";
 const char* hostHeader = "api.dev";
 const int httpsPort = 8082;
-String url = "/v1/feedback/create";
+String url = "/v1/notice";
 // Use web browser to view and copy SHA1 fingerprint of the certificate or use
 // openssl x509 -in server.crt -fingerprint
 const char* fingerprint = "A1 1F 18 32 A7 2C CE 2B 74 F8 0E 35 A7 11 16 11 7F 61 22 C9";
@@ -51,11 +51,13 @@ const size_t MAX_CONTENT_SIZE = 512;       // max size of the HTTP response
 const unsigned long HTTP_TIMEOUT = 10000;  // max respone time from server
 // The type of data that we want to extract from the page
 struct UserData {
-  char noticeId[32];
+  char id[32];
   char songId[32];
 };
 
 
+bool playingNow;
+unsigned long prevMills;
 
 // softwere serial for mp3 player
 SoftwareSerial mp3serial(MP3TX, MP3RX); // RX, TX
@@ -103,7 +105,7 @@ bool mp3state() {
 // Parse the JSON from the input string and extract the interesting values
 // Here is the JSON we need to parse
 // {
-//   "noticeId": 1,
+//   "id": 1,
 //   "songId": 1,
 // }
 bool readReponseContent(struct UserData* userData) {
@@ -124,7 +126,7 @@ bool readReponseContent(struct UserData* userData) {
   }
 
   // Here were copy the strings we're interested in
-  strcpy(userData->noticeId, root["noticeId"]);
+  strcpy(userData->id, root["id"]);
   strcpy(userData->songId, root["songId"]);
   // It's not mandatory to make a copy, you could just use the pointers
   // Since, they are pointing inside the "content" buffer, so you need to make
@@ -137,6 +139,8 @@ bool readReponseContent(struct UserData* userData) {
 
 
 void setup() {
+  prevMills = millis();
+    
   Serial.begin(115200);
   delay(10);
   Serial.setDebugOutput(true);
@@ -231,8 +235,7 @@ void setup() {
       Serial.println("ca failed");
   */
 
-
-
+  playingNow = false;
 }
 
 
@@ -271,7 +274,6 @@ void remoteGetNumOfMp3() {
     Serial.println("certificate doesn't match");
   }
 
-  String url = "/v1/notification";
 
   Serial.print("requesting URL: ");
   Serial.println(url);
@@ -290,22 +292,21 @@ void remoteGetNumOfMp3() {
     if (readReponseContent(&userData)) {
       
       Serial.print("noticeId = ");
-      Serial.println(userData->noticeId);
-      Serial.print("Company = ");
+      Serial.println(userData->id);
+      Serial.print("songId = ");
       Serial.println(userData->songId);
+        
+      playingNow = true;
     }
-  } 
-
+  }
+    
   Serial.println("closing connection");
+}
 
-
-
-
-  //wait until plaing
-
-
-
-
+viod remoteSendPlayFinish() {
+    
+  playingNow = false;
+    
   //connect to host
   Serial.print("connecting to ");
   Serial.println((String)host);
@@ -322,27 +323,13 @@ void remoteGetNumOfMp3() {
   }
 
 
-  String url = "/v1/feedback/create";
-
   Serial.print("requesting URL: ");
   Serial.println(url);
 
-  String body = "name=" + urlencode("tester") +
-                "&email=" + urlencode("example@gmail.com") +
-                "&subject=" + urlencode("test theme") +
-                "&body=" + urlencode("test body кирилица");
-
-  char contentLength[30];
-  sprintf(contentLength, "Content-Length: %d\r\n", strlen(body.c_str()));
-
-  espClient.print(String("POST ") + url + " HTTP/1.1\r\n" +
+  espClient.print(String("POST ") + url + userData->id + " HTTP/1.1\r\n" +
                   "Host: " + hostHeader + "\r\n" +
                   "User-Agent: MP3ESP8266\r\n" +
-                  String(contentLength) +
-                  "Content-Type: " + "application/x-www-form-urlencoded" + "\r\n" +
                   "Connection: close\r\n\r\n" +
-                  body +
-                  "\r\n"
                  );
 
   Serial.println("request sent");
@@ -374,13 +361,32 @@ void loop() {
   // Set volume
   vc.update(startMills);
 
-  if (mp3serial.available()) {
-    Serial.println("State from mp3");
-    mp3state();
+
+
+  //check current playing
+  if (playingNow){
+      if (mp3serial.available()) {
+        Serial.println("State from mp3");
+        if (mp3state()){
+            return;
+        }
+      }
+      //end of play
+      remoteSendPlayFinish();
+
+      return;
   }
 
-  //check
-
+  // each 5 min - check server for new notice
+  if (abs(startMills - prevMills) > 360000){
+      prevMills = startMills;
+      
+      remoteGetNumOfMp3();
+      if (playingNow) {
+        return;
+      }
+  }
+    
   // Check if a client has connected
   WiFiClient client = server.available();
   if (!client) {
